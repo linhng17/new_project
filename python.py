@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("Ứng dụng Đánh giá Phương án Kinh doanh 📊")
-st.markdown("Sử dụng Gemini AI để trích xuất dữ liệu và phân tích hiệu quả dự án.")
+st.markdown("Sử dụng Gemini AI để trích xuất dữ liệu, cho phép điều chỉnh thủ công và phân tích hiệu quả dự án.")
 
 # ****************************** KHU VỰC HÀM XỬ LÝ ******************************
 
@@ -71,10 +71,8 @@ def extract_financial_data(project_text, api_key):
         if raw_text.endswith("```"):
             raw_text = raw_text.rstrip("`")
         
-        # Xóa khoảng trắng và xuống dòng thừa
         raw_text = raw_text.strip()
         
-        # Xử lý chuỗi JSON và chuyển thành Dict/Object
         json_data = json.loads(raw_text)
         return json_data
 
@@ -95,7 +93,7 @@ def calculate_cash_flow_and_metrics(data):
     Xây dựng bảng dòng tiền và tính toán các chỉ số NPV, IRR, PP, DPP.
     """
     
-    # Ép kiểu dữ liệu
+    # Ép kiểu dữ liệu (Lấy từ dữ liệu đã qua điều chỉnh thủ công)
     I0 = data.get('Capital_Investment', 0.0)
     T = int(data.get('Project_Life_Years', 0))
     R = data.get('Annual_Revenue', 0.0)
@@ -125,10 +123,8 @@ def calculate_cash_flow_and_metrics(data):
     })
 
     # Tính toán các chỉ số
-    # NPV
     NPV = sum(discounted_cash_flows)
     
-    # IRR (Sử dụng numpy.irr)
     try:
         IRR = np.irr(cash_flows)
     except ValueError:
@@ -138,7 +134,7 @@ def calculate_cash_flow_and_metrics(data):
     cumulative_cf = np.cumsum(cash_flows)
     pp_year = np.argmax(cumulative_cf >= 0) 
     
-    if pp_year > 0:
+    if pp_year > 0 and cash_flows[pp_year] != 0:
         prev_year_cf = cumulative_cf[pp_year - 1]
         this_year_cf = cash_flows[pp_year]
         PP = pp_year - 1 + abs(prev_year_cf) / this_year_cf
@@ -148,7 +144,7 @@ def calculate_cash_flow_and_metrics(data):
     cumulative_dcf = np.cumsum(discounted_cash_flows)
     dpp_year = np.argmax(cumulative_dcf >= 0)
     
-    if dpp_year > 0:
+    if dpp_year > 0 and discounted_cash_flows[dpp_year] != 0:
         prev_year_dcf = cumulative_dcf[dpp_year - 1]
         this_year_dcf = discounted_cash_flows[dpp_year]
         DPP = dpp_year - 1 + abs(prev_year_dcf) / this_year_dcf
@@ -170,13 +166,13 @@ def calculate_cash_flow_and_metrics(data):
 
 
 # 4. Hàm Phân tích Chỉ số bằng AI (Yêu cầu 4)
+# (Không thay đổi)
 def analyze_metrics_with_ai(metrics_data, api_key):
     """Gửi các chỉ số đánh giá dự án đến AI để phân tích."""
     try:
         client = genai.Client(api_key=api_key)
         model_name = 'gemini-2.5-flash'
         
-        # Chuyển metrics_data sang định dạng dễ đọc cho AI
         metrics_text = "\n".join([f"- {k}: {v:,.2f}" if isinstance(v, (int, float)) and v is not np.nan else f"- {k}: {v}" for k, v in metrics_data.items()])
 
         prompt = f"""
@@ -250,7 +246,6 @@ if uploaded_file is not None:
     if project_text:
         st.text_area("Nội dung được trích xuất từ file:", value=project_text, height=100)
     
-# Ưu tiên nội dung từ text_area nếu nó được điền
 if project_text_area:
     project_text = project_text_area
 
@@ -262,7 +257,7 @@ if st.button("🚀 Lọc Dữ liệu Dự án bằng AI", disabled=not (project_
     elif not project_text:
         st.error("Vui lòng tải file hoặc dán nội dung dự án.")
     else:
-        # Xóa session state cũ để tránh lỗi hiển thị khi chạy lại
+        # Xóa session state cũ
         if 'extracted_data' in st.session_state:
             del st.session_state['extracted_data']
             
@@ -270,44 +265,61 @@ if st.button("🚀 Lọc Dữ liệu Dự án bằng AI", disabled=not (project_
             extracted_data = extract_financial_data(project_text, api_key_input)
             
             if extracted_data:
-                # Lưu dữ liệu vào session state để sử dụng sau
+                # Lưu dữ liệu thô vào session state
                 st.session_state['extracted_data'] = extracted_data
                 st.success("Trích xuất dữ liệu thành công! ✅")
-
-                # Hiển thị dữ liệu đã trích xuất
-                st.subheader("Thông tin Dự án đã Trích xuất")
-                
-                # Chuyển đổi để hiển thị đẹp
-                display_data = {
-                    "Vốn đầu tư ban đầu (VND)": extracted_data.get('Capital_Investment', 0.0),
-                    "Vòng đời dự án (Năm)": extracted_data.get('Project_Life_Years', 0),
-                    "Doanh thu hàng năm (VND)": extracted_data.get('Annual_Revenue', 0.0),
-                    "Chi phí hoạt động hàng năm (VND)": extracted_data.get('Annual_Operating_Cost', 0.0),
-                    "Tỷ suất chiết khấu WACC (%)": extracted_data.get('WACC_Rate_Percent', 0.0),
-                    "Thuế suất Thu nhập Doanh nghiệp (%)": extracted_data.get('Tax_Rate_Percent', 0.0)
-                }
-                
-                df_data = pd.DataFrame(display_data.items(), columns=["Chỉ tiêu", "Giá trị"])
-                df_data['Giá trị'] = df_data.apply(
-                    lambda row: f"{row['Giá trị']:,.0f}" if 'VND' in row['Chỉ tiêu'] else 
-                                f"{row['Giá trị']:.2f}" if isinstance(row['Giá trị'], float) else 
-                                row['Giá trị'], axis=1
-                )
-                
-                st.table(df_data)
-                
-                # Tự động tính toán sau khi trích xuất
-                st.session_state['run_calculation'] = True
             else:
-                st.session_state['run_calculation'] = False
+                st.session_state['extracted_data'] = None
 
-# --- Các bước tiếp theo: Tính toán và Phân tích ---
+# --- Chức năng 1.5: Điều chỉnh Thủ công ---
 if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
     
-    extracted_data = st.session_state['extracted_data']
+    st.markdown("---")
+    st.subheader("1.5. Điều chỉnh Thủ công Dữ liệu Dự án")
+    st.warning("Vui lòng kiểm tra và điều chỉnh các giá trị trích xuất (hoặc điền thủ công nếu AI thất bại) trước khi tính toán.")
     
-    # Thực hiện bước 2 & 3
-    df_cash_flow, metrics, error = calculate_cash_flow_and_metrics(extracted_data)
+    data = st.session_state['extracted_data']
+    
+    # Thiết lập giá trị mặc định nếu AI trích xuất thất bại hoặc trả về 0
+    I0 = data.get('Capital_Investment', 0.0)
+    T = data.get('Project_Life_Years', 0)
+    R = data.get('Annual_Revenue', 0.0)
+    C = data.get('Annual_Operating_Cost', 0.0)
+    WACC_rate = data.get('WACC_Rate_Percent', 0.0)
+    Tax_rate = data.get('Tax_Rate_Percent', 0.0)
+    
+    # Sử dụng st.columns và st.number_input để người dùng điều chỉnh
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        data['Capital_Investment'] = st.number_input(
+            "💰 Vốn Đầu tư Ban đầu (I0)", value=float(I0), min_value=0.0, step=1000000.0, format="%.0f", key="input_I0"
+        )
+        data['Annual_Revenue'] = st.number_input(
+            "📈 Doanh thu Hàng năm", value=float(R), min_value=0.0, step=100000.0, format="%.0f", key="input_R"
+        )
+    
+    with col2:
+        data['Project_Life_Years'] = st.number_input(
+            "⏳ Vòng đời Dự án (Năm)", value=int(T), min_value=1, step=1, key="input_T"
+        )
+        data['Annual_Operating_Cost'] = st.number_input(
+            "📉 Chi phí Hàng năm", value=float(C), min_value=0.0, step=100000.0, format="%.0f", key="input_C"
+        )
+    
+    with col3:
+        data['WACC_Rate_Percent'] = st.number_input(
+            "⚖️ Tỷ suất Chiết khấu (WACC, %)", value=float(WACC_rate), min_value=0.0, max_value=100.0, step=0.1, key="input_WACC"
+        )
+        data['Tax_Rate_Percent'] = st.number_input(
+            "🏛️ Thuế suất Thu nhập DN (%)", value=float(Tax_rate), min_value=0.0, max_value=100.0, step=0.1, key="input_Tax"
+        )
+
+    # Cập nhật session state với dữ liệu đã điều chỉnh
+    st.session_state['extracted_data'] = data
+    
+    # --- Chức năng Tính toán (Chạy sau khi có dữ liệu đã điều chỉnh) ---
+    df_cash_flow, metrics, error = calculate_cash_flow_and_metrics(st.session_state['extracted_data'])
 
     if error:
         st.error(f"Lỗi tính toán: {error}")
@@ -345,7 +357,6 @@ if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
             else:
                  col.metric(label, "N/A")
 
-        # Định dạng tiền tệ và tỷ lệ cho các chỉ số
         display_metric(col_npv, "NPV", metrics["Giá trị Hiện tại Ròng (NPV)"], ",.0f")
         display_metric(col_irr, "IRR", metrics["Lãi suất IRR"], ".2%")
         display_metric(col_pp, "Thời gian Hoàn vốn (PP)", metrics["Thời gian Hoàn vốn (PP)"])
