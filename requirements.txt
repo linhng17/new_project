@@ -9,8 +9,12 @@ pandas
 # Thư viện cho chức năng AI (sử dụng Gemini API)
 google-genai
 
-# Thư viện tính toán khoa học (cần cho np.irr)
+# Thư viện tính toán khoa học (cần cho các phép tính số)
 numpy
+
+# *** THƯ VIỆN ĐƯỢC THÊM VÀO ĐỂ KHẮC PHỤC LỖI NP.IRR ***
+# Chứa các hàm tài chính như irr, npv (đã bị loại khỏi module numpy cốt lõi)
+numpy-financial
 
 # Thư viện cần thiết để pandas đọc và ghi file Excel (.xlsx)
 openpyxl
@@ -18,5 +22,5 @@ openpyxl
 # Thư viện để đọc file Word (.docx) - Nếu chức năng đọc file Word được sử dụng
 python-docx
 
-# THÊM THƯ VIỆN NÀY ĐỂ GIẢI QUYẾT LỖI to_markdown()
+# THÊM THƯ VIỆN NÀY ĐỂ GIẢI QUYẾT LỖI to_markdown() của Pandas
 tabulate
