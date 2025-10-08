@@ -12,7 +12,6 @@ from io import BytesIO
 try:
     import docx
 except ImportError:
-    # Nếu chưa cài, sẽ cảnh báo khi người dùng tải file .docx
     docx = None 
 
 # --- Cấu hình Trang Streamlit ---
@@ -26,11 +25,27 @@ st.markdown("Sử dụng Gemini AI để trích xuất dữ liệu, cho phép đ
 
 # ****************************** KHU VỰC HÀM XỬ LÝ ******************************
 
-# 1. Hàm Trích xuất Dữ liệu bằng AI (Yêu cầu 1)
-def extract_financial_data(project_text, api_key):
-    """Sử dụng Gemini AI để trích xuất các thông số tài chính quan trọng."""
+# --- Lấy API Key từ Secrets (Tối ưu hóa API Key) ---
+def get_gemini_client():
+    """Tạo client Gemini và xử lý lỗi thiếu API Key."""
     try:
-        client = genai.Client(api_key=api_key)
+        api_key = st.secrets["GEMINI_API_KEY"]
+        return genai.Client(api_key=api_key), None
+    except KeyError:
+        return None, "Lỗi: Không tìm thấy Khóa API. Vui lòng cấu hình Khóa 'GEMINI_API_KEY' trong Streamlit Secrets."
+    except Exception as e:
+        return None, f"Lỗi khởi tạo client: {e}"
+
+
+# 1. Hàm Trích xuất Dữ liệu bằng AI (Yêu cầu 1)
+def extract_financial_data(project_text):
+    """Sử dụng Gemini AI để trích xuất các thông số tài chính quan trọng."""
+    client, error = get_gemini_client()
+    if error:
+        st.error(error)
+        return None
+
+    try:
         model_name = 'gemini-2.5-flash'
 
         # Tăng cường hướng dẫn để đảm bảo đầu ra CHỈ là JSON hợp lệ
@@ -77,7 +92,7 @@ def extract_financial_data(project_text, api_key):
         return json_data
 
     except APIError as e:
-        st.error(f"Lỗi gọi Gemini API: Vui lòng kiểm tra Khóa API hoặc giới hạn sử dụng. Chi tiết lỗi: {e}")
+        st.error(f"Lỗi gọi Gemini API: Vui lòng kiểm tra giới hạn sử dụng. Chi tiết lỗi: {e}")
         return None
     except json.JSONDecodeError:
         st.error(f"Lỗi: AI không trả về dữ liệu đúng định dạng JSON. Vui lòng thử lại hoặc chỉnh sửa văn bản dự án. Chuỗi nhận được: \n\n{raw_text}")
@@ -93,7 +108,7 @@ def calculate_cash_flow_and_metrics(data):
     Xây dựng bảng dòng tiền và tính toán các chỉ số NPV, IRR, PP, DPP.
     """
     
-    # Ép kiểu dữ liệu (Lấy từ dữ liệu đã qua điều chỉnh thủ công)
+    # Lấy dữ liệu
     I0 = data.get('Capital_Investment', 0.0)
     T = int(data.get('Project_Life_Years', 0))
     R = data.get('Annual_Revenue', 0.0)
@@ -104,12 +119,10 @@ def calculate_cash_flow_and_metrics(data):
     if T <= 0 or I0 <= 0 or WACC <= 0:
         return None, None, "Dữ liệu đầu vào không hợp lệ (Vòng đời, Vốn đầu tư, WACC phải lớn hơn 0)."
 
-    # Tính Dòng tiền Thuần Hoạt động hàng năm (NCF)
     EBIT = R - C
     Tax_Amount = EBIT * Tax_Rate if EBIT > 0 else 0 
     NCF_Annual = EBIT - Tax_Amount 
     
-    # Xây dựng bảng dòng tiền
     years = range(T + 1)
     cash_flows = [-I0] + [NCF_Annual] * T 
     discount_factors = [1 / ((1 + WACC) ** t) for t in years]
@@ -130,7 +143,7 @@ def calculate_cash_flow_and_metrics(data):
     except ValueError:
         IRR = np.nan
     
-    # PP (Thời gian hoàn vốn) & DPP (Thời gian hoàn vốn có chiết khấu)
+    # PP & DPP
     cumulative_cf = np.cumsum(cash_flows)
     pp_year = np.argmax(cumulative_cf >= 0) 
     
@@ -166,11 +179,13 @@ def calculate_cash_flow_and_metrics(data):
 
 
 # 4. Hàm Phân tích Chỉ số bằng AI (Yêu cầu 4)
-# (Không thay đổi)
-def analyze_metrics_with_ai(metrics_data, api_key):
+def analyze_metrics_with_ai(metrics_data):
     """Gửi các chỉ số đánh giá dự án đến AI để phân tích."""
+    client, error = get_gemini_client()
+    if error:
+        return error
+
     try:
-        client = genai.Client(api_key=api_key)
         model_name = 'gemini-2.5-flash'
         
         metrics_text = "\n".join([f"- {k}: {v:,.2f}" if isinstance(v, (int, float)) and v is not np.nan else f"- {k}: {v}" for k, v in metrics_data.items()])
@@ -197,22 +212,13 @@ def analyze_metrics_with_ai(metrics_data, api_key):
         return response.text
 
     except APIError as e:
-        return f"Lỗi gọi Gemini API: Vui lòng kiểm tra Khóa API hoặc giới hạn sử dụng. Chi tiết lỗi: {e}"
+        return f"Lỗi gọi Gemini API: Vui lòng kiểm tra giới hạn sử dụng. Chi tiết lỗi: {e}"
     except Exception as e:
         return f"Đã xảy ra lỗi không xác định khi yêu cầu phân tích AI: {e}"
 
 # ****************************** KHU VỰC GIAO DIỆN STREAMLIT ******************************
 
-# --- Thanh bên cấu hình API ---
-with st.sidebar:
-    st.header("🔑 Cấu hình API")
-    api_key_input = st.text_input(
-        "Nhập Khóa API Google Gemini",
-        type="password",
-        help="Khóa API này cần được lưu trữ bảo mật (Ví dụ: trong Streamlit Secrets)."
-    )
-    if not api_key_input:
-        st.warning("Vui lòng nhập Khóa API Gemini để sử dụng chức năng AI.")
+# --- Tối ưu hóa API Key: KHÔNG CẦN SIDEBAR NHẬP KEY NỮA ---
 
 # --- Chức năng 1: Tải File/Nhập Văn bản ---
 st.subheader("1. Tải lên và Trích xuất Dữ liệu Dự án (AI)")
@@ -250,28 +256,25 @@ if project_text_area:
     project_text = project_text_area
 
 # --- Nút Lọc Dữ liệu ---
-if st.button("🚀 Lọc Dữ liệu Dự án bằng AI", disabled=not (project_text and api_key_input)):
+if st.button("🚀 Lọc Dữ liệu Dự án bằng AI", disabled=not project_text):
     
-    if not api_key_input:
-        st.error("Vui lòng cung cấp Khóa API Gemini.")
-    elif not project_text:
-        st.error("Vui lòng tải file hoặc dán nội dung dự án.")
-    else:
-        # Xóa session state cũ
-        if 'extracted_data' in st.session_state:
-            del st.session_state['extracted_data']
-            
+    # Xóa session state cũ
+    if 'extracted_data' in st.session_state:
+        del st.session_state['extracted_data']
+        
+    client, error = get_gemini_client()
+    if error:
+        st.error(error)
+    elif project_text:
         with st.spinner('Đang gửi văn bản và chờ AI trích xuất thông tin...'):
-            extracted_data = extract_financial_data(project_text, api_key_input)
+            extracted_data = extract_financial_data(project_text)
             
             if extracted_data:
-                # Lưu dữ liệu thô vào session state
                 st.session_state['extracted_data'] = extracted_data
                 st.success("Trích xuất dữ liệu thành công! ✅")
-            else:
-                st.session_state['extracted_data'] = None
 
-# --- Chức năng 1.5: Điều chỉnh Thủ công ---
+
+# --- Chức năng 1.5: Điều chỉnh Thủ công (Đã sửa lỗi Streamlit Value Error) ---
 if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
     
     st.markdown("---")
@@ -280,15 +283,15 @@ if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
     
     data = st.session_state['extracted_data']
     
-    # Thiết lập giá trị mặc định nếu AI trích xuất thất bại hoặc trả về 0
+    # Lấy giá trị hiện tại, đặt giá trị mặc định tối thiểu cho Vòng đời Dự án là 1
     I0 = data.get('Capital_Investment', 0.0)
-    T = data.get('Project_Life_Years', 0)
+    T_raw = data.get('Project_Life_Years', 0)
+    T = max(1, int(T_raw)) # *** FIX LỖI STREAMLIT VALUE ERROR TẠI ĐÂY ***
     R = data.get('Annual_Revenue', 0.0)
     C = data.get('Annual_Operating_Cost', 0.0)
     WACC_rate = data.get('WACC_Rate_Percent', 0.0)
     Tax_rate = data.get('Tax_Rate_Percent', 0.0)
     
-    # Sử dụng st.columns và st.number_input để người dùng điều chỉnh
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -301,7 +304,7 @@ if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
     
     with col2:
         data['Project_Life_Years'] = st.number_input(
-            "⏳ Vòng đời Dự án (Năm)", value=int(T), min_value=1, step=1, key="input_T"
+            "⏳ Vòng đời Dự án (Năm)", value=T, min_value=1, step=1, key="input_T"
         )
         data['Annual_Operating_Cost'] = st.number_input(
             "📉 Chi phí Hàng năm", value=float(C), min_value=0.0, step=100000.0, format="%.0f", key="input_C"
@@ -315,10 +318,9 @@ if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
             "🏛️ Thuế suất Thu nhập DN (%)", value=float(Tax_rate), min_value=0.0, max_value=100.0, step=0.1, key="input_Tax"
         )
 
-    # Cập nhật session state với dữ liệu đã điều chỉnh
     st.session_state['extracted_data'] = data
     
-    # --- Chức năng Tính toán (Chạy sau khi có dữ liệu đã điều chỉnh) ---
+    # --- Chức năng Tính toán ---
     df_cash_flow, metrics, error = calculate_cash_flow_and_metrics(st.session_state['extracted_data'])
 
     if error:
@@ -370,13 +372,9 @@ if 'extracted_data' in st.session_state and st.session_state['extracted_data']:
         st.subheader("4. Yêu cầu AI Phân tích Chỉ số")
 
         if st.button("🤖 Yêu cầu AI Phân tích Hiệu quả Dự án"):
-             if api_key_input:
-                with st.spinner('Đang gửi các chỉ số và chờ Gemini phân tích...'):
-                    ai_analysis_result = analyze_metrics_with_ai(metrics, api_key_input)
-                    st.markdown("### Kết quả Phân tích từ Gemini AI")
-                    st.info(ai_analysis_result)
-             else:
-                st.error("Vui lòng nhập Khóa API Gemini để thực hiện phân tích.")
+            ai_analysis_result = analyze_metrics_with_ai(metrics)
+            st.markdown("### Kết quả Phân tích từ Gemini AI")
+            st.info(ai_analysis_result)
                 
 else:
     st.info("Vui lòng tải lên file hoặc dán nội dung dự án và bấm nút **Lọc Dữ liệu Dự án bằng AI** để bắt đầu.")
